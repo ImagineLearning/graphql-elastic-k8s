@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -144,7 +145,7 @@ func init() {
 		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
 			if character, ok := p.Value.(StarWarsChar); ok {
 				id, _ := strconv.Atoi(character.ID)
-				human := GetHuman(id)
+				human := GetHumanById(id)
 				if human.ID != "" {
 					return humanType
 				}
@@ -304,15 +305,27 @@ func init() {
 				Args: graphql.FieldConfigArgument{
 					"id": &graphql.ArgumentConfig{
 						Description: "id of the human",
-						Type:        graphql.NewNonNull(graphql.String),
+						Type:        graphql.String,
+					},
+					"name": &graphql.ArgumentConfig{
+						Description: "name of the human",
+						Type:        graphql.String,
 					},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					id, err := strconv.Atoi(p.Args["id"].(string))
-					if err != nil {
-						return nil, err
+					if p.Args["id"] == nil && p.Args["name"] == nil {
+						return nil, errors.New("id or name required.")
 					}
-					return GetHuman(id), nil
+					if p.Args["id"] != nil {
+						id, err := strconv.Atoi(p.Args["id"].(string))
+						if err != nil {
+							return nil, err
+						}
+
+						return GetHumanById(id), nil
+					} else {
+						return GetHumanByName(p.Args["name"].(string)), nil
+					}
 				},
 			},
 			"droid": &graphql.Field{
@@ -338,13 +351,21 @@ func init() {
 	})
 }
 
-func GetHuman(id int) StarWarsChar {
+func GetHumanById(id int) StarWarsChar {
 	// Search with a term query
-	termQuery := elastic.NewTermQuery("ID", id)
+	query := elastic.NewMatchQuery("ID", id)
+	return getHuman(query)
+}
+func GetHumanByName(name string) StarWarsChar {
+	// Search with a term query
+	query := elastic.NewMatchQuery("Name", name)
+	return getHuman(query)
+}
+func getHuman(query *elastic.MatchQuery) StarWarsChar {
 	searchResult, err := client.Search().
-		Index("starwars").       // search in index "tweets"
-		Query(termQuery).        // specify the query
-		From(0).Size(1).         // take document 0
+		Index("starwars").       // search in index "starwars"
+		Query(query).            // specify the query
+		From(0).Size(10).        // take documents 0-9
 		Pretty(true).            // pretty print request and response JSON
 		Do(context.Background()) // execute
 	if err != nil {
